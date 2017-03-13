@@ -18,7 +18,7 @@ as well as netmask "255.255.255.0" (default_netmask), default user "root"  (user
 Router is idetified by MAC address (main_mac) in the inventory. 
 
 ansible_host could define router IP address (not initial). Also inventory could supply user and password to override defaults.
-Rest is routers settings are defined in dictionaries that resembles uci settings.
+Rest of routers settings are defined in dictionaries that resembles uci settings (same as in lefant.openwrt- roles)
 
 At the moment only supported:
 dhcp.lan.ignore
