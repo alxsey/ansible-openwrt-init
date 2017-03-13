@@ -1,0 +1,15 @@
+galaxy_info:
+  author: Alex Ryabtsev
+  description: Initialize/setup brand new (upgraded) OpenWrt router
+  company: NFKW
+  license: GPLv3
+  min_ansible_version: 2.2
+  platforms:
+  - name: OpenWrt
+  versions:
+  - chaos_calmer
+  - designated_driver
+  categories:
+    - system
+dependencies:
+  - { role: lefant.openwrt-uci }

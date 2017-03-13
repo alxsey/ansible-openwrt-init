@@ -1,0 +1,4 @@
+---
+router_inventory_hostname: false
+dhcp_lan_ignore: "1"
+router_netmask: "255.255.255.0"
