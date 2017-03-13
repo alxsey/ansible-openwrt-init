@@ -1,0 +1,156 @@
+---
+# this is initial setup and it is not executed on router
+- name: ping check for router
+  shell: ping -q -c1 -W1 {{ initial_ip }}
+  register: ping_result
+  changed_when: false
+  failed_when: false
+
+- name: finding routers MAC address by checking ARP table
+  shell: arp -n {{ initial_ip }} | grep {{ initial_ip }} | grep -o -E '([[:xdigit:]]{1,2}:){5}[[:xdigit:]]{1,2}' | sed -E 's/0*([^:]+)/\1/g'
+  register: arping_result
+  changed_when: false
+  when: ping_result.rc == 0
+
+- name: check for telnet client executable
+  shell: telnet ?
+  register: telnet_exec
+  failed_when: telnet_exec.rc == 127
+  changed_when: false
+  when: ping_result.rc == 0
+
+- name: get local default route
+  shell: "netstat -nr | awk '/^0.0.0.0|^default/ { print $2 }' | grep -o -E '([[:digit:]]{1,3}.){3}[[:digit:]]{1,3}'"
+  changed_when: false
+  register: route_result
+  when: ping_result.rc == 0
+
+- name: normalize local default route
+  set_fact:
+    defroute: "{{ route_result.stdout_lines[0] | trim | lower | ipv4 }}"
+  when: ping_result.rc == 0
+
+- assert:
+    that: (ping_result.rc == 0) and (arping_result.stdout != '') and (telnet_exec.rc == 1)
+    msg: "No router at {{ initial_ip }} or telnet client executable"
+
+- name: looking up actual router inventory name from hosts by MAC address
+  set_fact: router_inventory_hostname={{item}}
+  with_items: "{{ hostvars.values() | list | json_query(jsonquery)}}"
+  vars:
+    jsonquery: "[?main_mac=='{{ arping_result.stdout | trim | lower | hwaddr }}'].inventory_hostname"
+
+# Need to use json_query since it is possible those variables do not exist.
+- name: check inventory for dhcp settings on for router
+  set_fact: dhcp_lan_ignore={{item if item != '' else 1}}
+  with_items: "{{ hostvars[router_inventory_hostname] | json_query('dhcp.lan.ignore')}}"
+  when: router_inventory_hostname != false
+
+- name: check inventory for netmask settings for router
+  set_fact: router_netmask={{item if item != '' else default_netmask}}
+  with_items: "{{ hostvars[router_inventory_hostname] | json_query('network.lan.netmask')}}"
+  when: router_inventory_hostname != false
+
+- name: getting actual IP address and init user/password for router
+  set_fact:
+    router_ip: "{{ hostvars[router_inventory_hostname].ansible_host | ipv4 if router_inventory_hostname else initial_ip }}"
+    router_user: "{{ hostvars[router_inventory_hostname].user if router_inventory_hostname else user }}"
+    router_password: "{{ hostvars[router_inventory_hostname].password if router_inventory_hostname else password }}"
+    router_dhcp_lan_ignore: "{{ dhcp_lan_ignore if router_inventory_hostname else 0 if initial_ip == defroute else 1 }}"
+
+# Now we have all initials discovers/set and ready to proceed.
+
+- name: check if telnet is enabled on router
+  shell: '{ echo "cd /"; sleep 1; } | telnet {{ initial_ip }}'
+  register: telnet_check
+  failed_when: telnet_check.rc != 1
+  changed_when: false
+
+- name: deploy ansible ssh key to manage router
+  shell: '{ sleep 0.5; echo "tee -a /etc/dropbear/authorized_keys"; sleep 0.5; cat ~/.ssh/id_rsa.pub; sleep 1; } | telnet {{ init_router_address }}'
+  when: not (( "Connection refused" in telnet_check.stderr ) or ( "Login failed" in telnet_check.stdout ))
+  failed_when: ( telnet_check.rc != 0 ) and ( telnet_check.stderr != "Connection closed by foreign host.")
+
+- name: set password (effectively enable ssh and disable telnet) on the router
+  shell: '{ echo "passwd {{ router_user }}"; sleep 0.5; echo "{{ router_password }}"; sleep 0.5; echo "{{ router_password }}"; sleep 1; } | telnet {{ initial_ip }}'
+  when: not (( "Connection refused" in telnet_check.stderr ) or ( "Login failed" in telnet_check.stdout ))
+  failed_when: ( telnet_check.rc != 0 ) and ( telnet_check.stderr != "Connection closed by foreign host.")
+
+# Below this point router should have telnet non functioning and ssh enabled
+
+- name: check if ansible key is installed (by passwordless ssh)
+  shell: ssh -o PasswordAuthentication=no -o StrictHostKeyChecking=no {{ router_user }}@{{ initial_ip }} "ls"
+  register: keycheck
+  changed_when: false
+
+# Below this point router should have ssh running and keys installed, so possible to use 'raw' module
+
+# setting up routers date and time using local date ad time, as first step
+- name: get local time
+  shell: 'date -u +%Y%m%d%H%M.%S'
+  changed_when: false
+  register: local_date
+
+- name: set time on router to local
+  delegate_to: "{{ initial_ip }}"
+  remote_user: "{{ router_user }}"
+  connection: ssh
+  raw: '[ "$(date -u +%Y%m%d%H%M.%S)" != "{{ local_date.stdout | trim }}" ] && date -u -s {{ local_date.stdout | trim }}'
+  register: result
+  changed_when: result.rc == 0
+  failed_when: false
+
+# In order to avoid rouge DHCP server - it should be enabled only if there is dhcp.lan.ignore set to 0, or in case such variable
+# not present - if local default GW equal routers IP address.
+- name: configuring LAN dhcp server or enabling it if it is default gateway
+  delegate_to: "{{ initial_ip }}"
+  connection: ssh
+  remote_user: "{{ router_user }}"
+  uci: 'command=set key="dhcp.lan.ignore" value={{router_dhcp_lan_ignore}}'
+  register: dhcp_result
+
+- name: set changes permanently on router
+  delegate_to: "{{ initial_ip }}"
+  connection: ssh
+  raw: uci commit
+  when: dhcp_result.changed
+
+# Final step is to change router address if it is available as ansible_host
+# All other configurations should be done using this IP address.
+- name: configuring LAN ip address
+  delegate_to: "{{ initial_ip }}"
+  connection: ssh
+  remote_user: "{{ router_user }}"
+  uci: 'command=set key="network.lan.ipaddr" value={{router_ip}}'
+  register: ipaddr_result
+
+- name: configuring LAN netmask
+  delegate_to: "{{ initial_ip }}"
+  connection: ssh
+  remote_user: "{{ router_user }}"
+  uci: 'command=set key="network.lan.netmask" value={{router_netmask}}'
+  register: netmask_result
+
+- name: set changes permanently on router
+  delegate_to: "{{ initial_ip }}"
+  connection: ssh
+  raw: uci commit
+  when: ipaddr_result.changed or netmask_result.changed
+
+- name: check if IP address changed and router network has to be reloaded
+  delegate_to: "{{ initial_ip }}"
+  connection: ssh
+  raw: "[ $(uci get network.lan.ipaddr) != $(ifconfig | awk -F'[ :]+' '/^br-lan/ { getline; print $4; }') ]"
+  changed_when: false
+  failed_when: false
+  register: network_reload
+
+# Finally if network IP address or netmask were changed - restart networking on router to make them active
+# this is fire-and-forget operation. Thus can not use raw module. Using shell instead
+- name: reloading network on router.
+  shell: ssh -o PasswordAuthentication=no -o StrictHostKeyChecking=no {{ router_user }}@{{ initial_ip }} "/etc/init.d/network reload"
+  when: network_reload.rc == 0
+  changed_when: true
+  failed_when: false
+  async: 1
+  poll: 0
