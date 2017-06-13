@@ -85,7 +85,7 @@
 
 # Below this point router should have ssh running and keys installed, so possible to use 'raw' module
 
-# setting up routers date and time using local date ad time, as first step
+# setting up routers date and time using local date and time, as first step
 - name: get local time
   shell: 'date -u +%Y%m%d%H%M.%S'
   changed_when: false
@@ -101,7 +101,7 @@
   failed_when: false
 
 # In order to avoid rouge DHCP server - it should be enabled only if there is dhcp.lan.ignore set to 0, or in case such variable
-# not present - if local default GW equal routers IP address.
+# not present - when ansible host local default GW equal routers IP address. I.e. router we are setting is default gateway.
 - name: configuring LAN dhcp server or enabling it if it is default gateway
   delegate_to: "{{ initial_ip }}"
   connection: ssh
