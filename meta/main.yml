@@ -11,5 +11,6 @@ galaxy_info:
   - designated_driver
   categories:
     - system
+    - openwrt
 dependencies:
   - { role: lefant.openwrt-uci }
