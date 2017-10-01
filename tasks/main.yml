@@ -67,7 +67,7 @@
   changed_when: false
 
 - name: deploy ansible ssh key to manage router
-  shell: '{ sleep 0.5; echo "tee -a /etc/dropbear/authorized_keys"; sleep 0.5; cat ~/.ssh/id_rsa.pub; sleep 1; } | telnet {{ init_router_address }}'
+  shell: '{ sleep 0.5; echo "tee -a /etc/dropbear/authorized_keys"; sleep 0.5; cat ~/.ssh/id_rsa.pub; sleep 1; } | telnet {{ initial_ip }}'
   when: not (( "Connection refused" in telnet_check.stderr ) or ( "Login failed" in telnet_check.stdout ))
   failed_when: ( telnet_check.rc != 0 ) and ( telnet_check.stderr != "Connection closed by foreign host.")
 
@@ -112,6 +112,7 @@
 - name: set changes permanently on router
   delegate_to: "{{ initial_ip }}"
   connection: ssh
+  remote_user: "{{ router_user }}"
   raw: uci commit
   when: dhcp_result.changed
 
@@ -134,12 +135,14 @@
 - name: set changes permanently on router
   delegate_to: "{{ initial_ip }}"
   connection: ssh
+  remote_user: "{{ router_user }}"
   raw: uci commit
   when: ipaddr_result.changed or netmask_result.changed
 
 - name: check if IP address changed and router network has to be reloaded
   delegate_to: "{{ initial_ip }}"
   connection: ssh
+  remote_user: "{{ router_user }}"
   raw: "[ $(uci get network.lan.ipaddr) != $(ifconfig | awk -F'[ :]+' '/^br-lan/ { getline; print $4; }') ]"
   changed_when: false
   failed_when: false
