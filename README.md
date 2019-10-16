@@ -40,7 +40,7 @@ Including an example of how to use your role (for instance, with variables passe
     - hosts: localhost
       roles:
          - { role: lefant.openwrt-uci }
-         - { role: alxsey.openwrt-init }
+         - { role: alxsey.openwrt_init }
 
 License
 -------
