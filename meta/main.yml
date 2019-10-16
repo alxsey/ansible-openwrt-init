@@ -1,4 +1,5 @@
 galaxy_info:
+  role_name: openwrt-init 
   author: Alex Ryabtsev
   description: Initialize/setup brand new (upgraded) OpenWrt router
   company: NFKW
